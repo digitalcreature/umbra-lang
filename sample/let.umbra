@@ -1,0 +1,6 @@
+
+let foo = 10 * 2;
+
+let bar = (
+    foo + 7
+) / 2;
