@@ -314,8 +314,6 @@ pub const TokenStream = struct {
             self.token.line.start = @ptrToInt(self.rest_text.ptr) - @ptrToInt(self.source.text.ptr);
         }
         self.token.text = self.rest_text[0..0];
-        var writer = std.io.getStdErr().writer();
-        writer.writeAll(self.token.text) catch unreachable;
         return result;
     }
 
