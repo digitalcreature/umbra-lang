@@ -2,7 +2,6 @@ const std = @import("std");
 
 usingnamespace @import("source.zig");
 usingnamespace @import("context.zig");
-usingnamespace @import("lexer.zig");
 
 const Allocator = std.mem.Allocator;
 
@@ -12,12 +11,11 @@ pub const Unit = struct {
 
     context: *Context,
     
-    source: *const Source,
-    token_stream: ?TokenStream = null,
+    source: Source.Ptr,
 
     const Self = @This();
 
-    pub fn create(context: *Context, source: *const Source) !*Self {
+    pub fn create(context: *Context, source: Source.Ptr) !*Self {
         const allocator = context.allocator;
         var self = try allocator.create(Self);
         self.* = Self {
@@ -35,16 +33,4 @@ pub const Unit = struct {
         }
         self.allocator.destroy(self);
     }
-    
-    // pub fn lex(self: *Self) !bool {
-    //     const lexer = try Lexer.create(self);
-    //     if (try lexer.lex()) |token_stream| {
-    //         self.token_stream = token_stream;
-    //         return true;
-    //     }
-    //     else {
-    //         return false;
-    //     }
-    // }
-
 };

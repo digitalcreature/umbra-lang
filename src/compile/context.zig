@@ -10,7 +10,6 @@ pub const Context = struct {
 
     allocator: *Allocator,
     units: UnitList,
-    log: Log,
 
     const UnitList = std.ArrayList(*Unit);
 
@@ -22,7 +21,6 @@ pub const Context = struct {
         self.* = Self {
             .allocator = allocator,
             .units = UnitList.init(allocator),
-            .log = Log{},
         };
 
         return self;
@@ -49,7 +47,7 @@ pub const Context = struct {
     //     return self.addUnit(source);
     // }
 
-    fn addUnit(self: *Self, source: *const Source) !*Unit {
+    pub fn addUnit(self: *Self, source: Source.Ptr) !*Unit {
         const unit = try Unit.create(self, source);
         errdefer unit.destroy();
         try self.units.append(unit);

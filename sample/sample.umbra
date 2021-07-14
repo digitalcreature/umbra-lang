@@ -1,0 +1,18 @@
+
+vert {   
+    .position: vec3f, ` clip space position
+    .uv: vec2f, ` screenspace uv 
+}
+
+frag {
+    ` the frag block holds values that need to be interpolated
+    .uv = vert.uv,
+}
+
+out {
+
+    .position = vert.position,
+
+    ` clamp, when not given a range, goes from 0 to 1
+    .color = @clamp(@sign(frag.uv.y - 0.5))
+}

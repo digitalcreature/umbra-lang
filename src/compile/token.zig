@@ -1,260 +1,338 @@
+// pub usingnamespace @import("~token.zig");
 const std = @import("std");
+usingnamespace @import("util");
 
 usingnamespace @import("source.zig");
+usingnamespace @import("log.zig");
 
-/// the max possible length of hashables
-/// theres a weird zig bug, so im sticking with u64 for now.
-/// this means keywords are limited to 7 characters in length, and builtins are matched by tag name
-const string_hash_bytes = 7;
-pub const StringHash = std.meta.Int(.unsigned, (string_hash_bytes + 1) * 8);
+const Allocator = std.mem.Allocator;
+
 
 pub const Token = struct {
 
-    name: Name,
-    value: []const u8,
-    line: *const Source.Line,
+    class: Class,
+    text: []const u8,
+    line: Source.Line,
 
-    pub const Class = TokenClass;
-    pub const Name = TokenName;
+    pub const Class = enum {
+
+        invalid,
+
+        symbol,
+        name,
+        keyword,
+        builtin,
+        number,
+
+        comment,
+        space,
+        line_end,
+    
+    };
 
     const Self = @This();
 
-    /// attempt to match a token to a given token class
-    /// calling using the `value` or `line_sep` token classes is a compile error,
-    /// use `Token.initValue()` or `Token.initLineSeperator()` instead
-    pub fn matchClass(comptime class: Class, text: []const u8, line: *const Source.Line) ?Self {
-        comptime {
-            if (class == .value) {
-                @compileError(
-                    "cannot use Token.match() for the value token class."
-                    ++ "use Token.initValue instead"
-                );
-            }
-        }
-        if (class == .builtin and (text[0] != '@' or text.len <= 1)) {
-            return null;
-        }
-        const text_hash = hash(text, class);
-        inline for (comptime std.enums.values(Name)) |name| {
-            if (comptime name.class() == class) {
-                if (class == .builtin) {
-                    const builtin_name = @tagName(name)[3..];   // remove the "at_" prefix
-                    if (std.mem.eql(u8, builtin_name, text[1..])) {
-                        return Self {
-                            .name = name,
-                            .value = text,
-                            .line = line,
-                        };
-                    }
-                }
-                else if (text_hash == name.hash()) {
-                    return Self {
-                        .name = name,
-                        .value = text,
-                        .line = line,
-                    };
-                }
-            }
-        }
-        return null;
+    pub fn sourceToken(self: Self) Source.Token {
+        return self.line.tokenFromSlice(self.text);
     }
 
+    pub const keywords = [_][]const u8{
+        "let",
+        "vert",
+        "frag",
+        "out",
+    };
 
-    /// initialize a new value token.
-    /// using a token name that is not in the `value` token class is a compile error,
-    /// use `Token.matchClass()` or `Token.initLineSeperator()` instead
-    pub fn initValue(comptime name: Name, value: []const u8, line: *const Source.Line) Self {
-        comptime {
-            if (!name.isValue()) {
-                @compileError(
-                    "cannot init Token with non-value name '" ++ @tagName(name) ++ "'."
-                    ++ " use Token.matchClass() or Token.initLineSeperator() instead."
-                );
-            }
-        }
-        return Self {
-            .name = name,
-            .value = value,
-            .line = line,
-        };
-    }
-
-    /// initialize a new line_sep token.
-    /// using a token name that is not in the `whitepace` token class is a compile error,
-    /// use `Token.matchClass()` or `Token.initValue()` instead
-    pub fn initLineSeperator(comptime name: Name, line: *const Source.Line) Self {
-        comptime {
-            if (!name.isLineSeperator()) {
-                @compileError(
-                    "cannot init Token with non-line_sep name '" ++ @tagName(name) ++ "'."
-                    ++ " use Token.matchClass() or Token.initValue() instead."
-                );
-            }
-        }
-        return Self {
-            .name = name,
-            .value = "",    // line_sep tokens dont have any meaningful text value
-            .line = line,
-        };
-    }
-
-    pub fn sourceToken(self: *const Self) Source.Token {
-        if (self.name.isLineSeperator()) {
-            return self.line.token(0, 0);
-        }
-        else {
-            return self.line.tokenFromSlice(self.value);
-        }
-    }
-
-    fn hash(string: []const u8, comptime class: Class) ?StringHash {
-        if (string.len > string_hash_bytes) {
-            return null;
-        }
-        else {
-            var result: StringHash = 0;
-            for (string) |char, i| {
-                result <<= 8;
-                result |= char;
-            }
-            // result <<= 8;
-            // result |= @truncate(u8, string.len);
-            result <<= 8;
-            result |= @enumToInt(class);
-            return result;
-        }
-    }
-
-    
     pub fn format(self: Self, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
-        const name = self.name;
-        if (name.isValue()) {
-            try writer.print("\"{s}\"", .{self.value});
-        }
-        else if (name.isLineSeperator()) {
-            try writer.print("<{s}>", .{ @tagName(name)});
+        if (self.class == .line_end) {
+            try writer.writeByte('\n');
         }
         else {
-            try writer.print("`{s}`", .{ self.value});
+            inline for (comptime std.enums.values(Class)) |class| {
+                if (class == self.class) {
+                    const style = switch(class) {
+                        .invalid => "101;30",
+                        .symbol => "33",
+                        .name => "32",
+                        .keyword => "94",
+                        .builtin => "96",
+                        .number => "35",
+                        .comment => "3;38;5;238",
+                        else => "",
+                    };
+                    try ansi.printEscaped(writer, style, "{}", .{ log.esc(self.text) });
+                }
+
+            }
         }
     }
 
 };
 
-const TokenName = enum(StringHash) {
-    paren_open = punctuation("("),
-    paren_close = punctuation(")"),
-    square_open = punctuation("["),
-    square_close = punctuation("]"),
-    curly_open = punctuation("{"),
-    curly_close = punctuation("}"),
-    dot = punctuation("."),
-    colon = punctuation(":"),
-    semicolon = punctuation(";"),
-    comma = punctuation(","),
+pub const TokenStream = struct {
 
-    plus = operator("+"),
-    minus = operator("-"),
-    aster = operator("*"),
-    slash = operator("/"),
-    percent = operator("%"),
-    equal = operator("="),
-    tilde = operator("~"),
-    pipe = operator("|"),
-    amp = operator("&"),
-    shift_left = operator("<<"),
-    shift_right = operator(">>"),
+    source: Source.Ptr,
 
-    kw_let = keyword("let"),
-    // kw_vert = keyword("vert"),
-    // kw_inst = keyword("inst"),
-    // kw_param = keyword("param"),
+    token: Token,
+    rest_text: []const u8,
     
-    at_transform = builtin(0),
-    at_affine = builtin(1),
-    at_pos = builtin(2),
-    at_dir = builtin(3),
-    at_mix = builtin(4),
-    at_interp = builtin(5),
-
-    ident = value(0),
-    number = value(1),
-
-    eol = lineSep(0),
-    eof = lineSep(1),
-
-
-    fn punctuation(text: []const u8) StringHash {
-        return Token.hash(text, .punctuation).?;
-    }
-
-    fn operator(text: []const u8) StringHash {
-        return Token.hash(text, .operator).?;
-    }
-
-    fn keyword(text: []const u8) StringHash {
-        return Token.hash(text, .keyword).?;
-    }
-
-    fn unhashed(index: u8, token_class: Token.Class) StringHash {
-        return (@as(StringHash, index) << 8) | @enumToInt(token_class);
-    }
-
-    fn builtin(index: u8) StringHash {
-        return unhashed(index, .builtin);
-    }
-
-    fn value(index: u8) StringHash {
-        return unhashed(index, .value);
-    }
-
-    fn lineSep(index: u8) StringHash {
-        return unhashed(index, .line_sep);
-    }
+    log_errors: bool = true,
 
     const Self = @This();
 
-    pub fn class(self: Self) Token.Class {
-        return @intToEnum(Token.Class, @truncate(u8, self.hash() & 0xff));
+    pub fn initFromSource(source: Source.Ptr) Self {
+        return init(source, source.text);
     }
 
-    pub fn isEnumerated(self: Self) bool {
-        return self.class().isEnumerated();
+    pub fn iniFromLine(line: Source.Line) Self {
+        return init(line.source, line.text());
     }
 
-    pub fn isValue(self: Self) bool {
-        return self.class().isValue();
+    fn init(source: Source.Ptr, text: []const u8) Self {
+        var token_text: []const u8 = source.text;
+        token_text.len = 0;
+        return Self {
+            .source = source,
+            .rest_text = text,
+            .token = Token {
+                .class = .invalid,
+                .text = token_text,
+                .line = Source.Line {
+                    .source = source,
+                    .index = 0,
+                    .start = 0,
+                },
+            },
+        };
     }
 
-    pub fn isLineSeperator(self: Self) bool {
-        return self.class().isLineSeperator();
+    pub fn deinit(self: *Self) void { }
+
+    /// advance stream index by `len`
+    /// if remaining text is shorter than `len`, advance to the end
+    fn advance(self: *Self, len: usize) void {
+        const actual_len = std.math.min(len, self.rest_text.len);
+        if (self.token.text.len == 0) {
+            self.token.text = self.rest_text[0..actual_len];
+        }
+        else {
+            self.token.text.len += actual_len;
+        }
+        self.rest_text = self.rest_text[actual_len..];
     }
 
-    pub fn hash(self: Self) StringHash {
-        return @enumToInt(self);
+    /// consume and return the next up to `len` characters of the remaining text
+    /// if remaining text is shorter than len, consume and return the entire remaining text
+    fn read(self: *Self, len: usize) []const u8 {
+        const result = self.peek(len);
+        defer self.advance(result.len);
+        return result;
     }
+
+    /// return the next `len` available characters of the remaining text
+    /// if remaining text is shorter than len, return the entire remaining text
+    /// no text is consumed, the index does not move
+    fn peek(self: Self, len: usize) []const u8 {
+        const actual_len = std.math.min(len, self.rest_text.len);
+        return self.rest_text[0..actual_len];
+    }
+
+    pub fn next(self: *Self) ?Token {
+        if (self.rest_text.len == 0) {
+            return null;
+        }
+        else {
+            self.advance(1);
+            const char = self.token.text[0];
+            switch (char)  {
+                
+                0 => return self.emitInvalid("null byte", .{}),
+
+                '\n', '\r' => {
+                    if (char == '\n' or self.matchOptionalString("\n")) {
+                        return self.emit(.line_end);
+                    }
+                    else {
+                        return self.emitInvalid("lone carriage return", .{});
+                    }
+                },
+
+                '\t' => return self.emitInvalid("tab characters are not allowed", .{}),
+
+                ' ' => {
+                    _ = self.matchManyChar(' ');
+                    return self.emit(.space);
+                },
+
+                '`' => {
+                    _ = self.matchManyClass(charclass.notLineEnd);
+                    return self.emit(.comment);
+                },
+
+                '(', ')', '{', '}',
+                ',', '.', ':',
+                '+', '-', '*', '/', '=',
+                    => return self.emit(.symbol),
+                
+                '0'...'9' => {
+                    if (char == '0' and self.matchOptionalString("x")) {
+                        // hex
+                        if (self.matchManyClass(charclass.hexDigit).len == 0) {
+                            return self.emitInvalid("hex number literal missing digits", .{});
+                        }
+                        return self.emit(.number);
+
+                    }
+                    else {
+                        // decimal
+                        _ = self.matchManyClass(charclass.digit);
+                        if (self.matchOptionalString(".")) {
+                            if (self.matchManyClass(charclass.digit).len == 0) {
+                                return self.emitInvalid("decimal number literal missing fractional digits", .{});
+                            }
+                        }
+                        return self.emit(.number);
+                    }
+                },
+                
+                else => {
+                    if (charclass.name(char) or char == '@') {
+                        _ = self.matchManyClass(charclass.name);
+                        if (char == '@') {
+                            return self.emit(.builtin);
+                        }
+                        else {
+                            inline for (Token.keywords) |keyword| {
+                                if (std.mem.eql(u8, keyword, self.token.text)) {
+                                    return self.emit(.keyword);
+                                }
+                            }
+                            return self.emit(.name);
+                        }
+                    }
+                    else {
+                        if (std.ascii.isGraph(char)) {
+                            return self.emitInvalid("invalid character", .{});
+                        }
+                        else {
+                            return self.emitInvalid("invalid character byte '\\x{X}'", .{char});
+                        }
+                    }
+                },
+                
+            }
+        }
+    }
+
+    /// lex the rest of the file, logging any errors found
+    pub fn rest(self: *Self) void {
+        while (self.next()) |_| {}
+    }
+
+    pub const charclass = struct {
+        
+        pub fn valid(char: u8) bool {
+            return std.ascii.isGraph(char) or char == ' ';
+        }
+
+        pub fn name(char: u8) bool {
+            return switch (char) {
+                'a'...'z', 'A'...'Z', '0'...'9', '_' => true,
+                else => false,
+            };
+        }
+
+        pub fn digit(char: u8) bool {
+            return char >= '0' and char <= '9';
+        }
+
+        pub fn hexDigit(char: u8) bool {
+            return switch (char) {
+                '0'...'9', 'a'...'f', 'A'...'F', => true,
+                else => false,
+            };
+        }
+
+        pub fn lineEnd(char: u8) bool {
+            return switch (char) {
+                '\n', '\r' => true,
+                else => false,
+            };
+        }
+
+        pub fn notLineEnd(char: u8) bool {
+            return valid(char) and !lineEnd(char);
+        }
+
+
+    };
+
+    const CharClass = fn (u8) bool;
+
+    fn matchManyClass(self: *Self, comptime char_class: CharClass) []const u8 {
+        var len: usize = undefined;
+        for (self.rest_text) |char, i| {
+            len = i;
+            if (!char_class(char)) {
+                break;
+            }
+        }
+        return self.read(len);
+    }
+
+    fn matchManyChar(self: *Self, comptime char: u8) []const u8 {
+        return self.matchManyClass(struct {
+            fn _(c: u8) bool {
+                return c == char;
+            }
+        }._);
+    }
+
+    fn matchOptionalString(self: *Self, string: []const u8) bool {
+        if (std.mem.eql(u8, string, self.peek(string.len))) {
+            self.advance(string.len);
+            return true;
+        }
+        else {
+            return false;
+        }
+    }
+
+    fn emit(self: *Self, comptime class: Token.Class) Token {
+        var result = self.token;
+        result.class = class;
+        if (class == .line_end) {
+            self.token.line.index += 1;
+            self.token.line.start = @ptrToInt(self.rest_text.ptr) - @ptrToInt(self.source.text.ptr);
+        }
+        self.token.text = self.rest_text[0..0];
+        var writer = std.io.getStdErr().writer();
+        writer.writeAll(self.token.text) catch unreachable;
+        return result;
+    }
+
+    fn emitInvalid(self: *Self, comptime fmt: []const u8, args: anytype) Token {
+        if (self.log_errors) {
+            log.logSourceToken(.err, self.token.sourceToken(), fmt, args) catch unreachable;
+        }
+        return self.emit(.invalid);
+    }
+
 
 };
 
-const TokenClass = enum(u8) {
-    punctuation,
-    operator,
-    keyword,
-    builtin,
-    value,
-    line_sep,
+const st = std.testing;
 
-    const Self = @This();
-
-    pub fn isEnumerated(self: Self) bool {
-        return !self.isValue() and !self.isLineSeperator();
+test {
+    // const source = try Source.createFromBytes(st.allocator, "foo bar baz");
+    const source = try Source.createFromFile(st.allocator, "sample/sample.umbra");
+    defer source.destroy();
+    var tokens = TokenStream.initFromSource(source);
+    defer tokens.deinit();
+    tokens.log_errors = false;
+    const writer = std.io.getStdErr().writer();
+    while (tokens.next()) |token| {
+        try writer.print("{}", .{token});
     }
-
-    pub fn isValue(self: Self) bool {
-        return self == .value;
-    }
-
-    pub fn isLineSeperator(self: Self) bool {
-        return self == .line_sep;
-    }
-};
+    try writer.writeByte('\n');
+}

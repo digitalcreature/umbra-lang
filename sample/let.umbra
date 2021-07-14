@@ -1,6 +1,11 @@
 
-let foo = 10 * 2;
+let foo = 10 * 2
 
 let bar = (
     foo + 7
-) / 2;
+) / 2
+
+@hewwo
+
+` let baz = @min(foo, bar)
+dsg sg %%% dgksg

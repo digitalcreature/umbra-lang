@@ -12,17 +12,15 @@ pub const Source = struct {
     allocator: *Allocator,
 
     path: []const u8,
-
     text: []const u8,
 
-    lines: []const Line,
-
+    pub const Ptr = *const Self;
     pub const Line = SourceLine;
     pub const Token = SourceToken;
 
     const Self = @This();
 
-    pub fn createFromFile(allocator: *Allocator, path: []const u8) !*const Self {
+    pub fn createFromFile(allocator: *Allocator, path: []const u8) !Ptr {
         var cwd = std.fs.cwd();
         var file = try cwd.openFile(path, .{});
         defer file.close();
@@ -37,78 +35,31 @@ pub const Source = struct {
         return create(allocator, path, text);
     }
 
-    fn create(allocator: *Allocator, path: []const u8, text: []const u8) !*const Self {
+    pub fn createFromBytes(allocator: *Allocator, bytes: []const u8) !Ptr {
+        const text = try allocator.dupe(u8, bytes);
+        errdefer allocator.free(text);
+        return try create(allocator, "(string)", text);
+    }
+
+    fn create(allocator: *Allocator, path: []const u8, text: []const u8) !Ptr {
         var self = try allocator.create(Self);
         self.* = Self {
             .allocator = allocator,
             .path = path,
             .text = text,
-            .lines = undefined,  
         };
 
-        errdefer allocator.destroy(self);
+        // errdefer allocator.destroy(self);
 
-        try self.initLines();
+        // try self.initLines();
 
         return self;
     }
 
-    pub fn destroy(self: *const Self) void {
+    pub fn destroy(self: Ptr) void {
         self.allocator.free(self.text);
-        self.allocator.free(self.lines);
         self.allocator.destroy(self);
     }
-
-    fn initLines(self: *Self) !void {
-        var lines = std.ArrayList(Line).init(self.allocator);
-        var lines_iter = std.mem.split(self.text, "\n");
-        var index: usize = 0;
-        while (lines_iter.next()) |line_text| {
-            var line = Line {
-                .source = self,
-                .index = index,
-                .text = line_text,
-            };
-            try lines.append(line);
-            index += 1;
-        }
-        self.lines = lines.toOwnedSlice();
-    }
-
-    pub const FindTokenError = error {
-        /// the given token is not a subslice of the source text
-        NotTextSubSlice,
-        /// the given token crosses a line boundary
-        MultilineToken,
-    };
-
-    /// given a slice to a substring of this source file, find 
-    pub fn findToken(self: *const Self, token_text: []const u8) FindTokenError!Token {
-        for (token_text) |char| {
-            // no multiline tokens
-            if (char == '\n') {
-                return FindTokenError.MultilineToken;
-            }
-        }
-        if (!isSubSlice(self.text, token_text)) {
-            return FindTokenError.NotTextSubSlice;
-        }
-        for (self.lines) |*line| {
-            if (@ptrToInt(token_text.ptr) > @ptrToInt(line.text.ptr)) {
-                const start = @ptrToInt(token_text.ptr) - @ptrToInt(line.text.ptr);
-                return Token {
-                    .line = line,
-                    .start = start,
-                    .len = token_text.len,
-                };
-            }
-        }
-        // if its not a multiline, and its in this source text,
-        // we are garunteed to find it in one of the lines
-        unreachable;
-    }
-
-
 
 };
 
@@ -127,13 +78,23 @@ fn isSubSlice(sup: []const u8, sub: []const u8) bool {
 
 const SourceLine = struct {
 
-    source: *const Source,
+    source: Source.Ptr,
     index: usize,
-    text: []const u8,
+    start: usize,
 
+    pub const Ptr = *const Self;
+    
     const Self = @This();
 
-    pub fn token(self: *const Self, start: usize, len: usize) SourceToken {
+    pub fn init(source: Source.Ptr, index: usize, start: usize) Self {
+        return Self {
+            .source = source,
+            .index = index,
+            .start = start,
+        };
+    }
+
+    pub fn token(self: Self, start: usize, len: usize) SourceToken {
         return SourceToken {
             .line = self,
             .start = start,
@@ -141,12 +102,31 @@ const SourceLine = struct {
         };
     }
 
-    pub fn tokenFromSlice(self: *const Self, text: []const u8) SourceToken {
-        if (std.debug.runtime_safety and !isSubSlice(self.text, text)) {
-            std.debug.panic("token '{s}' out of bounds of line:\n'{s}'", .{text, self.text});
+    pub fn text(self: Self) []const u8 {
+        var st = self.source.text[self.start..];
+        for (st) |char, i| {
+            switch (char) {
+                '\n' => return st[0..i],
+                '\r' => {
+                    if ((i+1 < st.len) and st[i+i] == '\n') {
+                        return st[0..i];
+                    }
+                },
+                else => {}
+            }
         }
-        const start = @ptrToInt(text.ptr) - @ptrToInt(self.text.ptr);
-        return self.token(start, text.len);
+        return st;
+    }
+
+    pub fn tokenFromSlice(self: Self, slice: []const u8) SourceToken {
+        if (std.debug.runtime_safety) {
+            const self_text = self.text();
+            if (!isSubSlice(self_text, slice)) {
+                std.debug.panic("token '{s}' out of bounds of line:\n'{s}'", .{slice, self_text});
+            }
+        }
+        const token_start = @ptrToInt(slice.ptr) - @ptrToInt(self.source.text.ptr);
+        return self.token(token_start - self.start, slice.len);
     }
 
 
@@ -154,18 +134,18 @@ const SourceLine = struct {
 
 const SourceToken = struct {
 
-    line: *const SourceLine,
+    line: Source.Line,
     start: usize,
     len: usize,
 
     const Self = @This();
 
-    pub fn source(self: Self) *const Source {
+    pub fn source(self: Self) Source.Ptr {
         return self.line.source;
     }
 
     pub fn text(self: Self) []const u8 {
-        return self.line.text[self.start..][0..self.len];
+        return self.line.text()[self.start..][0..self.len];
     }
     
     // pub fn format(self: Self, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
