@@ -86,3 +86,124 @@ pub fn printEscaped(writer: anytype, comptime style: []const u8, comptime fmt: [
         try writer.print(comptime cleanEsc(fmt), args);
     }
 }
+
+
+pub const Style = enum(u8) {
+    
+    none = 0,
+    
+    bold = 1,
+    italic = 3,
+    underline = 4,
+    invert = 7,
+    strike = 9,
+
+    no_bold = 22,
+    no_italic = 23,
+    no_underline = 24,
+    no_invert = 27,
+    no_strike = 29,
+
+};
+
+pub const Color = enum(u8) {
+
+    default = 39,
+
+    black = 30,
+    red = 31,
+    green = 32,
+    yellow = 33,
+    blue = 34,
+    magenta = 35,
+    cyan = 36,
+    white = 37,
+
+    black_light = 90,
+    red_light = 91,
+    green_light = 92,
+    yellow_light = 93,
+    blue_light = 94,
+    magenta_light = 95,
+    cyan_light = 96,
+    white_light = 97,
+
+};
+
+pub fn StyledWriter(comptime writer_type: type) type {
+    return struct {
+
+        writer: Writer,
+
+        pub const Writer = writer_type;
+
+        const Self = @This();
+
+        fn esc(self: Self, numbers: []const u8) !void {
+            try self.write("\x1b[");
+            for (numbers) |number, i| {
+                if (i > 0) {
+                    try self.write(";");
+                }
+                try self.print("{d}", .{number});
+            }
+            try self.write("m");
+        }
+        pub fn write(self: Self, text: []const u8) !void {
+            try self.writer.writeAll(text);
+        }
+
+        pub fn print(self: Self, comptime fmt: []const u8, args: anytype) !void {
+            try self.writer.print(fmt, args);
+        }
+
+        pub fn style(self: Self, s: Style) !void { try self.esc(&.{ @enumToInt(s) }); }
+        pub fn styles(self: Self, ss: []const Style) !void {
+            for (ss) |s| {
+                try self.style(s);
+            }
+        }
+
+        pub fn none(self: Self) !void { try self.style(.none); }
+        pub fn bold(self: Self) !void { try self.style(.bold); }
+        pub fn italic(self: Self) !void { try self.style(.italic); }
+        pub fn underline(self: Self) !void { try self.style(.underline); }
+        pub fn invert(self: Self) !void { try self.style(.invert); }
+        pub fn strike(self: Self) !void { try self.style(.strike); }
+        
+        pub fn noBold(self: Self) !void { try self.style(.no_bold); }
+        pub fn noItalic(self: Self) !void { try self.style(.no_italic); }
+        pub fn noUnderline(self: Self) !void { try self.style(.no_underline); }
+        pub fn noInvert(self: Self) !void { try self.style(.no_invert); }
+        pub fn noStrike(self: Self) !void { try self.style(.no_strike); }
+
+        pub fn colors(self: Self, fore: ?Color, back: ?Color) !void {
+            if (fore) |fg| {
+                try self.esc(&.{@enumToInt(fg)});
+            }
+            if (back) |bg| {
+                try self.esc(&.{@enumToInt(bg) + 10});
+            }
+        }
+
+        pub fn noColors(self: Self) !void { try self.colors(.default, .default); }
+
+        pub fn foreground(self: Self, col: Color) !void { try self.colors(col, null); }
+        pub fn background(self: Self, col: Color) !void { try self.colors(null, col); }
+        
+        pub fn noForeground(self: Self) !void { try self.colors(.default, null); }
+        pub fn noBackground(self: Self) !void { try self.colors(null, .default); }
+
+
+    };
+}
+
+pub fn styledWriter(writer: anytype) StyledWriter(@TypeOf(writer)) {
+    return StyledWriter(@TypeOf(writer)){ .writer = writer };
+}
+
+pub const StyledFileWriter = StyledWriter(std.fs.File.Writer);
+
+pub fn styledStdErr() StyledFileWriter {
+    return styledWriter(std.io.getStdErr().writer());
+}

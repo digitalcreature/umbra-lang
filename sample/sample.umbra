@@ -10,8 +10,8 @@ frag {
 }
 
 out {
-
-    .position = vert.position,
+    ## 
+    .position = &^%+ vert.position,
 
     ` clamp, when not given a range, goes from 0 to 1
     .color = @clamp(@sign(frag.uv.y - 0.5))

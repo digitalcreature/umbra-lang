@@ -42,31 +42,42 @@ pub const log = struct {
 
     pub fn logSourceToken(comptime level: Level, token: Source.Token, comptime fmt: []const u8, args: anytype) !void {
         const writer = std.io.getStdErr().writer();
-        try ansi.printEscaped(writer, "3", "{s}:{d}:{d}", .{token.source().path, token.line.index + 1, token.start + 1});
-        try writer.writeAll(" ");
-        try writePrefix(level);
-        try writer.print(fmt ++ "\n", args);
+        const sw = ansi.styledStdErr();
+        try sw.italic();
+        try sw.print("{s}:{d}:{d} ", .{token.source().path, token.line.index + 1, token.start + 1});
+        try sw.none();
+        try writePrefix(sw, level);
+        try sw.print(fmt ++ "\n", args);
         const line_text = token.line.text();
-        try ansi.printEscaped(writer, "90", " >>> ", .{});
+        try sw.foreground(.black_light);
+        try sw.write(" >>> ");
+        try sw.noForeground();
         if (token.start > 0) {
             try writer.print("{}", .{ esc(line_text[0..token.start]) });
         }
-        try ansi.printEscaped(writer, "100", "{s}", .{ esc(token.text()) });
+        try sw.background(.black_light);
+        try sw.print("{s}", .{ esc(token.text()) });
+        try sw.none();
         const token_end = token.start + token.len;
         if (token_end < line_text.len) {
-            try writer.print("{}", .{ esc(line_text[token_end..]) });
+            try sw.print("{}", .{ esc(line_text[token_end..]) });
         }
-        try writer.writeAll("\n");
-        try writer.writeAll("\n");
+        try sw.write("\n\n");
     }
 
-    fn writePrefix(comptime level: Level) !void {
-        const writer = std.io.getStdErr().writer();
+    fn writePrefix(sw: anytype, comptime level: Level) !void {
         switch (level) {
-            .err => try ansi.printEscaped(writer, "91", "error", .{}),
-            .warn => try ansi.printEscaped(writer, "38;5;164", "warning", .{}),
+            .err => {
+                try sw.foreground(.red_light);
+                try sw.write("error");
+            },
+            .warn => {
+                try sw.foreground(.yellow_light);
+                try sw.write("warning");
+            },
         }
-        try writer.writeAll(": ");
+        try sw.none();
+        try sw.write(": ");
     }
 
 };

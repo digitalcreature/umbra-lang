@@ -44,26 +44,34 @@ pub const Token = struct {
     };
 
     pub fn format(self: Self, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
+        const sw = ansi.styledWriter(writer);
         if (self.class == .line_end) {
-            try writer.writeByte('\n');
+            try sw.write("\n");
         }
         else {
-            inline for (comptime std.enums.values(Class)) |class| {
-                if (class == self.class) {
-                    const style = switch(class) {
-                        .invalid => "101;30",
-                        .symbol => "33",
-                        .name => "32",
-                        .keyword => "94",
-                        .builtin => "96",
-                        .number => "35",
-                        .comment => "3;38;5;238",
-                        else => "",
-                    };
-                    try ansi.printEscaped(writer, style, "{}", .{ log.esc(self.text) });
-                }
-
+            switch(self.class) {
+                .invalid => try sw.foreground(.red_light),
+                .symbol => try sw.foreground(.yellow),
+                .name => try sw.foreground(.green),
+                .keyword => try sw.foreground(.blue_light),
+                .builtin => try sw.foreground(.cyan_light),
+                .number => try sw.foreground(.magenta),
+                .comment => try sw.foreground(.black_light),
+                else => {},
             }
+            for (self.text) |char| { 
+                const is_printable = std.ascii.isGraph(char) or char == ' ';
+                if (is_printable) {
+                    try sw.print("{c}", .{char});
+                }
+                else {
+                    try sw.invert();
+                    try sw.print("[{X:0>2}]", .{char});
+                    try sw.noInvert();
+                }
+            }
+            // try ansi.printEscaped(writer, style, "{}", .{ log.esc(self.text) });
+            try sw.none();
         }
     }
 
@@ -335,4 +343,7 @@ test {
         try writer.print("{}", .{token});
     }
     try writer.writeByte('\n');
+    var tokens_errors = TokenStream.initFromSource(source);
+    defer tokens_errors.deinit();
+    tokens_errors.rest();
 }
